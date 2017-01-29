@@ -21,7 +21,7 @@ stream = BytesIO()
 camera = PiCamera()
 camera.resolution = (640, 384)
 #camera.start_preview()
-camera.framerate = 8
+camera.framerate = 5
 time.sleep(2)
 
 lcd = SMemLCD('/dev/spidev0.0')
@@ -38,9 +38,9 @@ try:
         imageInverted = PIL.ImageOps.invert(imageContrasted)
         imagedithered = imageInverted.convert('1') # convert image to black or white
         
-        GPIO.output(22, 1)
+#        GPIO.output(22, 1)
         lcd.write(imagedithered.tobytes())
-        GPIO.output(22, 0)
+#        GPIO.output(22, 0)
         
         stream.seek(0)
         

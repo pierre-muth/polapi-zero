@@ -52,13 +52,14 @@ class Adafruit_Thermal(Serial):
 	lineSpacing     =  8
 	barcodeHeight   = 50
 	printMode       =  0
-	defaultHeatTime = 120
+	defaultHeatTime = 60
 
 	def __init__(self, *args, **kwargs):
 		# If no parameters given, use default port & baud rate.
 		# If only port is passed, use default baud rate.
 		# If both passed, use those values.
 		baudrate = 19200
+		rtscts=True
 		if len(args) == 0:
 			args = [ "/dev/ttyAMA0", baudrate ]
 		elif len(args) == 1:
@@ -85,8 +86,8 @@ class Adafruit_Thermal(Serial):
 		self.wake()
 		self.reset()
 		
-		GPIO.setmode(GPIO.BOARD)
-		GPIO.setup(18, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+#		GPIO.setmode(GPIO.BOARD)
+#		GPIO.setup(18, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 
 		# Description of print settings from page 23 of the manual:
 		# ESC 7 n1 n2 n3 Setting Control Parameter Command
@@ -106,7 +107,7 @@ class Adafruit_Thermal(Serial):
 		self.writeBytes(
 		  27,       # Esc
 		  55,       # 7 (print settings)
-		  20,       # Heat dots (20 = balance darkness w/no jams)
+		  12,       # Heat dots (20 = balance darkness w/no jams)
 		  heatTime, # Lib default = 45
 		  250)      # Heat interval (500 uS = slower but darker)
 
@@ -452,7 +453,7 @@ class Adafruit_Thermal(Serial):
 					
 				i += rowBytes - rowBytesClipped
 				
-			self.timeoutSet(1)
+		#	self.timeoutSet(1)
 
 		self.prevByte = '\n'
 
