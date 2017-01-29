@@ -8,6 +8,8 @@ from time import sleep
 from PIL import Image
 from PIL import ImageOps
 from PIL import ImageEnhance
+from PIL import ImageDraw
+from PIL import ImageFont
 from smemlcd import SMemLCD
 from picamera import PiCamera
 from io import BytesIO
@@ -16,9 +18,6 @@ from Adafruit_Thermal import *
 S_WIDTH = 400
 S_HEIGHT = 240
 S_SIZE = (S_WIDTH, S_HEIGHT)
-F_WIDTH = 2400
-F_HEIGHT = 1440
-F_SIZE = (S_WIDTH, S_HEIGHT)
 P_WIDTH = 640
 P_HEIGHT = 384
 P_SIZE = (S_WIDTH, S_HEIGHT)
@@ -50,13 +49,14 @@ GPIO.add_event_detect(PREV_PIN, GPIO.FALLING, bouncetime=250)
 stream = BytesIO()
 camera = PiCamera()
 camera.resolution = (P_WIDTH, P_HEIGHT)
-camera.framerate = 6
+camera.framerate = 5
 camera.contrast = 50
 camera.start_preview()
 sleep(1)
 
 def displayImageFileOnLCD(filename):
     print 'displays ', filename
+    title = 'Review Mode'
     # resize/dither to screen resolution and send to LCD
     image = Image.open(filename)
     im_width, im_height = image.size
@@ -65,9 +65,16 @@ def displayImageFileOnLCD(filename):
     image.thumbnail(S_SIZE, Image.ANTIALIAS)
     image_sized = Image.new('RGB', S_SIZE, (0, 0, 0))
     image_sized.paste(image,((S_SIZE[0] - image.size[0]) / 2, (S_SIZE[1] - image.size[1]) / 2))
+    # draw filename
+    draw = ImageDraw.Draw(image_sized)
+    font = ImageFont.truetype('arial.ttf', 18)
+    draw.rectangle([(0, 0), (115, 22)], fill=(255,255,255), outline=(0,0,0))
+    draw.text((2, 2), title, fill='black', font=font)
+    draw.rectangle([(279, 217), (399, 239)], fill=(255,255,255), outline=(0,0,0))
+    draw.text((290, 218), filename, fill='black', font=font)
+    # display on LCD
     image_sized = ImageOps.invert(image_sized)
     image_sized = image_sized.convert('1') # convert image to black and white
-    
     lcd.write(image_sized.tobytes())
     
 def printImageFile(filename):
@@ -76,10 +83,8 @@ def printImageFile(filename):
     
 def saveImageToFile(image, filename):
     print 'saves image ', filename
+    # save full image
     image.save(filename)
-#     fh = open(filename, 'w')
-#     fh.close()
-    # save full res image
     
 #Main loop
 while True:
@@ -90,13 +95,10 @@ while True:
         stream.seek(0) # "Rewind" the stream to the beginning so we can read its content
         image_source = Image.open(stream)
         imageResized = image_source.resize((S_WIDTH, S_HEIGHT), Image.NEAREST)
-        imageEnancer = ImageEnhance.Contrast(imageResized)
-        imageContrasted = imageEnancer.enhance(2)
-        imageInverted = ImageOps.invert(imageContrasted)
+        imageInverted = ImageOps.invert(imageResized)
         imagedithered = imageInverted.convert('1') # convert image to black or white
         
         lcd.write(imagedithered.tobytes())
-        
         stream.seek(0)
         
         if GPIO.event_detected(SHOT_PIN):
