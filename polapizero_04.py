@@ -4,6 +4,7 @@ Created on 24 Jan 2017
 '''
 import os
 import RPi.GPIO as GPIO
+import threading
 from Adafruit_Thermal import *
 from time import sleep
 from PIL import Image
@@ -22,14 +23,45 @@ S_SIZE = (S_WIDTH, S_HEIGHT)
 P_WIDTH = 640
 P_HEIGHT = 384
 P_SIZE = (P_WIDTH, P_HEIGHT)
+F_WIDTH = 1280
+F_HEIGHT = 768
+F_SIZE = (F_WIDTH, F_HEIGHT)
 
 SHOT_PIN = 16
 PRINT_PIN = 15
 NEXT_PIN = 13
 PREV_PIN = 11
 
+# Thread using the image full resolution
+class CameraThread(threading.Thread):
+    takeAshot = False
+    stream2 = BytesIO()
+        
+    def __init__(self):
+        threading.Thread.__init__(self)
+        self.event = threading.Event()
+
+    def run(self):
+        global currentFileNumber
+        for bug in camera.capture_continuous(self.stream2, format='jpeg', use_video_port=True, splitter_port=0):
+            self.stream2.seek(0) # "Rewind" the stream to the beginning so we can read its content
+            
+            if self.takeAshot:
+                image = Image.open(self.stream2)
+                
+                # Increment file number    
+                i = 1
+                while os.path.exists("pz%05d.jpg" % i):
+                    i += 1
+                currentFileNumber = i
+#              
+                # Save last to a jpeg file
+                saveImageToFile(image, "pz%05d.jpg" % currentFileNumber)
+                
+                self.takeAshot = False
+                break
+            
 # Variables
-isShot = False
 currentFileNumber = -1
 
 # GPIO setup
@@ -54,8 +86,8 @@ printer = Adafruit_Thermal("/dev/ttyAMA0", 115200, timeout=0, rtscts=True)
 # Create camera and in-memory stream
 stream = BytesIO()
 camera = PiCamera()
-camera.resolution = (P_WIDTH, P_HEIGHT)
-camera.framerate = 6
+camera.resolution = (F_WIDTH, F_HEIGHT)
+camera.framerate = 8
 camera.contrast = 50
 camera.start_preview()
 sleep(1)
@@ -101,14 +133,16 @@ def saveImageToFile(image, filename):
     
 #Main loop
 while True:
-    stream.seek(0)
+    # Start a Printer resolution camera Thread to minimize shot delay
+    cameraThreadForPrint = CameraThread()
+    cameraThreadForPrint.start()
 
     # View Loop
-    for foo in camera.capture_continuous(stream, format='jpeg', use_video_port=True):
+    stream.seek(0)
+    for foo in camera.capture_continuous(stream, format='jpeg', use_video_port=True, resize=(S_WIDTH, S_HEIGHT), splitter_port=1):
         t1 = time.time()
         stream.seek(0) # "Rewind" the stream to the beginning so we can read its content
         image_source = Image.open(stream)
-        image_source.thumbnail(S_SIZE, Image.NEAREST)
         imageInverted = ImageOps.invert(image_source)
         
         # convert image to black or white and send to LCD
@@ -117,25 +151,16 @@ while True:
         print('capture and display time: %f' % (time.time() - t1))
         
         if GPIO.event_detected(SHOT_PIN):
-            isShot = True
+            cameraThreadForPrint.takeAshot = True
             break
         if GPIO.event_detected(PRINT_PIN):
             break
     
-    # Do we shot or review?
-    if isShot:
-        # Increment file number
-        i = 1
-        while os.path.exists("pz%05d.jpg" % i):
-            i += 1
-        currentFileNumber = i
+    # Wait the picture is taken
+    cameraThreadForPrint.join(5)
         
-        # Save last to a jpeg file
-        saveImageToFile(image_source, "pz%05d.jpg" % currentFileNumber)
-        isShot = False
-        
-    # Is current file number set yet ?
-    elif currentFileNumber == -1 :
+    # Set current file number if not set yet
+    if currentFileNumber == -1 :
         i = 0
         while True:
             if os.path.exists("pz%05d.jpg" % (i+1)):
