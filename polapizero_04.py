@@ -35,6 +35,7 @@ PREV_PIN = 11
 # Thread using the image full resolution
 class CameraThread(threading.Thread):
     takeAshot = False
+    exitNOshot = False
     stream2 = BytesIO()
         
     def __init__(self):
@@ -45,7 +46,7 @@ class CameraThread(threading.Thread):
         global currentFileNumber
         for bug in camera.capture_continuous(self.stream2, format='jpeg', use_video_port=True, splitter_port=0):
             self.stream2.seek(0) # "Rewind" the stream to the beginning so we can read its content
-            
+            print('Capture thread: ', self.takeAshot)
             if self.takeAshot:
                 image = Image.open(self.stream2)
                 
@@ -59,6 +60,9 @@ class CameraThread(threading.Thread):
                 saveImageToFile(image, "pz%05d.jpg" % currentFileNumber)
                 
                 self.takeAshot = False
+                break
+            
+            if self.exitNOshot:
                 break
             
 # Variables
@@ -91,6 +95,8 @@ camera.framerate = 8
 camera.contrast = 50
 camera.start_preview()
 sleep(1)
+#Printer resolution camera Thread to minimize shot delay
+cameraThreadForPrint = CameraThread()
 
 def displayImageFileOnLCD(filename):
     print 'displays ', filename
@@ -133,9 +139,10 @@ def saveImageToFile(image, filename):
     
 #Main loop
 while True:
-    # Start a Printer resolution camera Thread to minimize shot delay
-    cameraThreadForPrint = CameraThread()
-    cameraThreadForPrint.start()
+    # Restart shooting thread
+    if not cameraThreadForPrint.isAlive():
+        cameraThreadForPrint = CameraThread()
+        cameraThreadForPrint.start()
 
     # View Loop
     stream.seek(0)
@@ -148,12 +155,13 @@ while True:
         # convert image to black or white and send to LCD
         lcd.write(imageInverted.convert('1').tobytes())
         stream.seek(0)
-        print('capture and display time: %f' % (time.time() - t1))
+        print('Live view : capture and display time: %f' % (time.time() - t1))
         
         if GPIO.event_detected(SHOT_PIN):
             cameraThreadForPrint.takeAshot = True
             break
         if GPIO.event_detected(PRINT_PIN):
+            cameraThreadForPrint.exitNOshot = True
             break
     
     # Wait the picture is taken
