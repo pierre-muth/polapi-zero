@@ -31,6 +31,7 @@ SHOT_PIN = 16
 PRINT_PIN = 15
 NEXT_PIN = 13
 PREV_PIN = 11
+HALT_PIN = 31
 
 # Thread using the image full resolution
 class CameraThread(threading.Thread):
@@ -46,7 +47,7 @@ class CameraThread(threading.Thread):
         global currentFileNumber
         for bug in camera.capture_continuous(self.stream2, format='jpeg', use_video_port=True, splitter_port=0):
             self.stream2.seek(0) # "Rewind" the stream to the beginning so we can read its content
-            print('Capture thread: ', self.takeAshot)
+#             print('Capture thread: ', self.takeAshot)
             if self.takeAshot:
                 image = Image.open(self.stream2)
                 
@@ -74,6 +75,7 @@ GPIO.setup(SHOT_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 GPIO.setup(PRINT_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 GPIO.setup(NEXT_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 GPIO.setup(PREV_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+GPIO.setup(HALT_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 
 # add edge detection on a channel
 GPIO.add_event_detect(SHOT_PIN, GPIO.FALLING, bouncetime=250)  
@@ -90,6 +92,7 @@ printer = Adafruit_Thermal("/dev/ttyAMA0", 115200, timeout=0, rtscts=True)
 # Create camera and in-memory stream
 stream = BytesIO()
 camera = PiCamera()
+camera.rotation = 180
 camera.resolution = (F_WIDTH, F_HEIGHT)
 camera.framerate = 8
 camera.contrast = 50
@@ -97,6 +100,12 @@ camera.start_preview()
 sleep(1)
 #Printer resolution camera Thread to minimize shot delay
 cameraThreadForPrint = CameraThread()
+
+def haltSystem(channel):
+    print 'Halt...'
+    os.system("sudo halt")
+    
+GPIO.add_event_detect(31, GPIO.FALLING, callback = haltSystem, bouncetime = 2000)
 
 def displayImageFileOnLCD(filename):
     print 'displays ', filename
@@ -155,7 +164,7 @@ while True:
         # convert image to black or white and send to LCD
         lcd.write(imageInverted.convert('1').tobytes())
         stream.seek(0)
-        print('Live view : capture and display time: %f' % (time.time() - t1))
+#         print('Live view : capture and display time: %f' % (time.time() - t1))
         
         if GPIO.event_detected(SHOT_PIN):
             cameraThreadForPrint.takeAshot = True
