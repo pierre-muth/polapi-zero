@@ -33,10 +33,9 @@ NEXT_PIN = 13
 PREV_PIN = 11
 HALT_PIN = 31
 
-# Thread using the image full resolution
+# Thread using the image at screen resolution
 class CameraThread(threading.Thread):
-    takeAshot = False
-    exitNOshot = False
+    exit = False
     stream2 = BytesIO()
         
     def __init__(self):
@@ -44,26 +43,20 @@ class CameraThread(threading.Thread):
         self.event = threading.Event()
 
     def run(self):
-        global currentFileNumber
-        for bug in camera.capture_continuous(self.stream2, format='jpeg', use_video_port=True, splitter_port=0):
+        global lcd
+        for foo in camera.capture_continuous(self.stream2, format='jpeg', use_video_port=True, resize=(S_WIDTH, S_HEIGHT), splitter_port=0):
             self.stream2.seek(0) # "Rewind" the stream to the beginning so we can read its content
-#             print('Capture thread: ', self.takeAshot)
-            if self.takeAshot:
-                image = Image.open(self.stream2)
-                
-                # Increment file number    
-                i = 1
-                while os.path.exists("pz%05d.jpg" % i):
-                    i += 1
-                currentFileNumber = i
-#              
-                # Save last to a jpeg file
-                saveImageToFile(image, "pz%05d.jpg" % currentFileNumber)
-                
-                self.takeAshot = False
-                break
+            print('live-view thread')
             
-            if self.exitNOshot:
+            # create image and invert it
+            image_source = Image.open(self.stream2)
+            imageInverted = ImageOps.invert(image_source)
+            
+            # convert image to black or white and send to LCD
+            lcd.write(imageInverted.convert('1').tobytes())
+            self.stream2.seek(0)
+            
+            if self.exit:
                 break
             
 # Variables
@@ -78,10 +71,10 @@ GPIO.setup(PREV_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 GPIO.setup(HALT_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 
 # add edge detection on a channel
-GPIO.add_event_detect(SHOT_PIN, GPIO.FALLING, bouncetime=250)  
-GPIO.add_event_detect(PRINT_PIN, GPIO.FALLING, bouncetime=250)  
-GPIO.add_event_detect(NEXT_PIN, GPIO.FALLING, bouncetime=250)  
-GPIO.add_event_detect(PREV_PIN, GPIO.FALLING, bouncetime=250)  
+GPIO.add_event_detect(SHOT_PIN, GPIO.FALLING, bouncetime=1000)  
+GPIO.add_event_detect(PRINT_PIN, GPIO.FALLING, bouncetime=1000)  
+GPIO.add_event_detect(NEXT_PIN, GPIO.FALLING, bouncetime=400)  
+GPIO.add_event_detect(PREV_PIN, GPIO.FALLING, bouncetime=400)  
 
 # Create Sharp mempry LCD
 lcd = SMemLCD('/dev/spidev0.0')
@@ -98,7 +91,7 @@ camera.framerate = 8
 camera.contrast = 50
 camera.start_preview()
 sleep(1)
-#Printer resolution camera Thread to minimize shot delay
+# Thread for camera capture at LCD resolution to minimize shot delay
 liveViewThread = CameraThread()
 
 def haltSystem(channel):
@@ -111,14 +104,18 @@ def displayImageFileOnLCD(filename):
     print 'displays ', filename
     title = 'Review Mode'
     # resize/dither to screen resolution and send to LCD
-    image = Image.open(filename)
+    try:
+        image = Image.open(filename)
+    except IOError:
+        print ("cannot identify image file", filename)
+        image = Image.open('unidentified.jpg')
     im_width, im_height = image.size
     if im_width < im_height:
         image = image.rotate(90)
     image.thumbnail(S_SIZE, Image.ANTIALIAS)
     image_sized = Image.new('RGB', S_SIZE, (0, 0, 0))
     image_sized.paste(image,((S_SIZE[0] - image.size[0]) / 2, (S_SIZE[1] - image.size[1]) / 2))
-    # draw filename
+    # draw the filename
     draw = ImageDraw.Draw(image_sized)
     font = ImageFont.truetype('arial.ttf', 18)
     draw.rectangle([(0, 0), (115, 22)], fill=(255,255,255), outline=(0,0,0))
@@ -133,13 +130,19 @@ def displayImageFileOnLCD(filename):
 def printImageFile(filename):
     print 'prints ', filename
     # resize to printer resolution and send to printer
-    image = Image.open(filename)
-    im_width, im_height = image.size
-    if im_width > im_height:
-        image = image.rotate(90)
-    image.thumbnail((P_HEIGHT, P_WIDTH), Image.ANTIALIAS)
-    printer.printImage(image, False)
-    printer.feed(3)
+    try:
+        image = Image.open(filename)
+        im_width, im_height = image.size
+        if im_width > im_height:
+            image = image.rotate(90)
+        image.thumbnail((P_HEIGHT, P_WIDTH), Image.ANTIALIAS)
+        printer.printImage(image, False)
+        printer.justify('C')
+        printer.setSize('S')
+        printer.println("PolaPi-Zero")
+        printer.feed(3)
+    except IOError:
+        print ("cannot identify image file", filename)
     
 def saveImageToFile(image, filename):
     print 'saves image ', filename
@@ -155,22 +158,30 @@ while True:
 
     # View Loop
     stream.seek(0)
-    for foo in camera.capture_continuous(stream, format='jpeg', use_video_port=True, resize=(S_WIDTH, S_HEIGHT), splitter_port=1):
+    for bug in camera.capture_continuous(stream, format='jpeg', use_video_port=True, splitter_port=1):
         t1 = time.time()
         stream.seek(0) # "Rewind" the stream to the beginning so we can read its content
-        image_source = Image.open(stream)
-        imageInverted = ImageOps.invert(image_source)
-        
-        # convert image to black or white and send to LCD
-        lcd.write(imageInverted.convert('1').tobytes())
-        stream.seek(0)
-#         print('Live view : capture and display time: %f' % (time.time() - t1))
-        
+        print('capture')
+
+        # take a picture        
         if GPIO.event_detected(SHOT_PIN):
-            liveViewThread.takeAshot = True
+            liveViewThread.exit = True
+            image = Image.open(stream)
+            
+            # Increment file number    
+            i = 1
+            while os.path.exists("pz%05d.jpg" % i):
+                i += 1
+            currentFileNumber = i
+#              
+            # Save last to a jpeg file
+            saveImageToFile(image, "pz%05d.jpg" % currentFileNumber)
+            
             break
+        
+        # review mode
         if GPIO.event_detected(PRINT_PIN):
-            liveViewThread.exitNOshot = True
+            liveViewThread.exit = True
             break
     
     # Wait the picture is taken
