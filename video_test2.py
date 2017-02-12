@@ -16,41 +16,41 @@ import time
 S_WIDTH = 400
 S_HEIGHT = 240
 S_SIZE = (S_WIDTH, S_HEIGHT)
-P_WIDTH = 640
-P_HEIGHT = 384
+P_WIDTH = S_WIDTH*2
+P_HEIGHT = S_HEIGHT*2
 P_SIZE = (P_WIDTH, P_HEIGHT)
 
 class MyOutput(object):
-    image_scan = Image.new('L', S_SIZE, 0)
     def __init__(self):
-        self.size = 0
+        self.image_scan = Image.new('L', P_SIZE, 0)
         self.x = 0
     def write(self, s):
         global lcd
-        self.size += len(s)
-        image = Image.frombuffer('L', (416, 240), s, "raw", 'L', 0, 1)
-        image = image.crop((self.x, 0, self.x+1, S_HEIGHT))
-        self.image_scan.paste(image,(self.x,0))
-        self.x += 1
-        if self.x >= S_WIDTH:
-            self.x = 0
+        image = Image.frombuffer('L', P_SIZE, s, "raw", 'L', 0, 1)
+        image = image.crop((self.x, 0, self.x+1, P_HEIGHT))
+        self.image_scan.paste(image,(self.x, 0))
+        if self.x < P_WIDTH-1:
+            self.x += 1
         image = ImageOps.invert(self.image_scan)
+        image.thumbnail(S_SIZE, Image.NEAREST)
         image = image.convert('1')
         lcd.write(image.tobytes())
 
-    def flush(self):
-        print('%d bytes total' % self.size) 
-        
 lcd = SMemLCD('/dev/spidev0.0')
 
 with picamera.PiCamera() as camera:
     camera.rotation = 180
     camera.resolution = P_SIZE
-    camera.framerate = 24
+    camera.framerate = 20
     camera.start_preview()
-    camera.start_recording(MyOutput(), format='yuv', resize=(416, 240))
-    sleep(18)
-    t1 = time.time()
-    MyOutput.image_scan.save('test_video.jpg')
-    print('time: %f' % (time.time()-t1) )
+    myoutput = MyOutput()
+    camera.start_recording(myoutput, format='yuv')
+    xprev = 0
+    while myoutput.x < P_WIDTH -1:
+        print(myoutput.x - xprev)
+        xprev = myoutput.x
+        sleep(1)
     camera.stop_recording()
+    t1 = time.time()
+    myoutput.image_scan.save('test_video.jpg')
+    print('time: %f' % (time.time()-t1) )

@@ -32,18 +32,36 @@ PRINT_PIN = 15
 NEXT_PIN = 13
 PREV_PIN = 11
 HALT_PIN = 31
+FRAME_MODE = 1
+SCAN_MODE = 2
 
 class LiveView(object):
     def __init__(self):
-        pass
+        self.image_scan = Image.new('L', F_SIZE, 0)
+        self.x = 0
+        self.mode = FRAME_MODE
+        self.scanDone = False
 
     def write(self, s):
         global lcd
-        image = Image.frombuffer('L', (416, 240), s, "raw", 'L', 0, 1)
-        image = image.crop((8, 0, S_WIDTH+8, S_HEIGHT))
-        image = ImageOps.invert(image)
-        image = image.convert('1')
-        lcd.write(image.tobytes())
+        image = Image.frombuffer('L', F_SIZE, s, "raw", 'L', 0, 1)
+        if self.mode == FRAME_MODE:
+            image.thumbnail(S_SIZE, Image.NEAREST)
+            image = ImageOps.invert(image)
+            image = image.convert('1')
+            lcd.write(image.tobytes())
+            
+        if self.mode == SCAN_MODE:
+            image = image.crop((self.x, 0, self.x+1, F_HEIGHT))
+            self.image_scan.paste(image,(self.x, 0))
+            if self.x < F_WIDTH-1:
+                self.x += 1
+            else:
+                self.scanDone = True
+            image = ImageOps.invert(self.image_scan)
+            image.thumbnail(S_SIZE, Image.NEAREST)
+            image = image.convert('1')
+            lcd.write(image.tobytes())
 
     def flush(self):
         print('Stop LiveView') 
@@ -139,7 +157,8 @@ def saveImageToFile(image, filename):
     
 #Main loop
 while True:
-    camera.start_recording(LiveView(), format='yuv', resize=(416, 240))
+    liveview = LiveView()
+    camera.start_recording(liveview, format='yuv')
     # Buttons loop
     while True:
         sleep(0.1)
@@ -156,6 +175,20 @@ while True:
             break
         # review mode
         if GPIO.event_detected(PRINT_PIN):
+            camera.stop_recording()
+            break
+        # start slit-scan mode
+        if GPIO.event_detected(PREV_PIN):
+            liveview.mode = SCAN_MODE
+        # slit-scan mode done
+        if liveview.scanDone:
+            # Increment file number    
+            i = 1
+            while os.path.exists("pz%05d.jpg" % i):
+                i += 1
+            currentFileNumber = i
+            print("capture pz%05d.jpg" % currentFileNumber)
+            liveview.image_scan.save("pz%05d.jpg" % currentFileNumber)
             camera.stop_recording()
             break
     
