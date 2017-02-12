@@ -107,7 +107,7 @@ class Adafruit_Thermal(Serial):
 		self.writeBytes(
 		  27,       # Esc
 		  55,       # 7 (print settings)
-		  12,       # Heat dots (20 = balance darkness w/no jams)
+		  5,       # Heat dots (20 = balance darkness w/no jams)
 		  heatTime, # Lib default = 45
 		  250)      # Heat interval (500 uS = slower but darker)
 
@@ -120,8 +120,8 @@ class Adafruit_Thermal(Serial):
 		# Break time is n(D7-D5)*250us.
 		# (Unsure of the default value for either -- not documented)
 
-		printDensity   = 14 # 120% (can go higher, but text gets fuzzy)
-		printBreakTime =  4 # 500 uS
+		printDensity   = 12 # 120% (can go higher, but text gets fuzzy)
+		printBreakTime =  7 # 500 uS
 
 		self.writeBytes(
 		  18, # DC2
