@@ -17,15 +17,15 @@ from picamera import PiCamera
 from io import BytesIO
 
 # Constants
-S_WIDTH = 400
-S_HEIGHT = 240
-S_SIZE = (S_WIDTH, S_HEIGHT)
-P_WIDTH = 640
-P_HEIGHT = 384
-P_SIZE = (P_WIDTH, P_HEIGHT)
-F_WIDTH = P_WIDTH*2
-F_HEIGHT = P_HEIGHT*2
-F_SIZE = (F_WIDTH, F_HEIGHT)
+SCREEN_WIDTH = 400
+SCREEN_HEIGHT = 240
+SCREEN_SIZE = (SCREEN_WIDTH, SCREEN_HEIGHT)
+PRINTER_WIDTH = 640
+PRINTER_HEIGHT = 384
+PRINTER_SIZE = (PRINTER_WIDTH, PRINTER_HEIGHT)
+FILE_WIDTH = PRINTER_WIDTH*2
+FILE_HEIGHT = PRINTER_HEIGHT*2
+FILE_SIZE = (FILE_WIDTH, FILE_HEIGHT)
 
 SHOT_PIN = 16
 PRINT_PIN = 15
@@ -34,34 +34,60 @@ PREV_PIN = 11
 HALT_PIN = 31
 FRAME_MODE = 1
 SCAN_MODE = 2
+SCAN_MODE_FIX = 3
 
 class LiveView(object):
     def __init__(self):
-        self.image_scan = Image.new('L', F_SIZE, 0)
+        self.image_scan = Image.new('L', PRINTER_SIZE, 0)
         self.x = 0
         self.mode = FRAME_MODE
         self.scanDone = False
 
     def write(self, s):
         global lcd
-        image = Image.frombuffer('L', F_SIZE, s, "raw", 'L', 0, 1)
+        image = Image.frombuffer('L', PRINTER_SIZE, s, "raw", 'L', 0, 1)
+        
         if self.mode == FRAME_MODE:
-            image.thumbnail(S_SIZE, Image.NEAREST)
+            image.thumbnail(SCREEN_SIZE, Image.NEAREST)
             image = ImageOps.invert(image)
             image = image.convert('1')
             lcd.write(image.tobytes())
             
         if self.mode == SCAN_MODE:
-            image = image.crop((self.x, 0, self.x+1, F_HEIGHT))
+            image = image.crop((self.x, 0, self.x+1, PRINTER_HEIGHT))
             self.image_scan.paste(image,(self.x, 0))
-            if self.x < F_WIDTH-1:
+            
+            if self.x < PRINTER_WIDTH-1:
                 self.x += 1
             else:
                 self.scanDone = True
+                
             image = ImageOps.invert(self.image_scan)
-            image.thumbnail(S_SIZE, Image.NEAREST)
+            image.thumbnail(SCREEN_SIZE, Image.NEAREST)
             image = image.convert('1')
             lcd.write(image.tobytes())
+            
+        if self.mode == SCAN_MODE_FIX:
+            image = image.crop((PRINTER_WIDTH/2, 0, (PRINTER_WIDTH/2)+1, PRINTER_HEIGHT))
+            image_total = Image.new('L', (self.x+1, PRINTER_HEIGHT), 0)
+            image_total.paste(self.image_scan, (0, 0))
+            image_total.paste(image,(self.x, 0))
+            self.image_scan = image_total.copy()
+              
+            if self.x < 5000:
+                self.x += 1
+            else:
+                self.scanDone = True
+                  
+            image = ImageOps.invert(self.image_scan)
+            if image.size[0] > PRINTER_SIZE[0]:
+                image = image.crop((image.size[0]-1 - PRINTER_SIZE[0], 0, image.size[0]-1, PRINTER_HEIGHT))
+            
+            image.thumbnail(SCREEN_SIZE, Image.NEAREST)
+            image_sized = Image.new('L', SCREEN_SIZE, 0)
+            image_sized.paste(image,(0, 0))
+            image_sized = image_sized.convert('1')
+            lcd.write(image_sized.tobytes())
 
     def flush(self):
         print('Stop LiveView') 
@@ -93,7 +119,7 @@ printer = Adafruit_Thermal("/dev/ttyAMA0", 115200, timeout=0, rtscts=True)
 stream = BytesIO()
 camera = PiCamera()
 camera.rotation = 180
-camera.resolution = F_SIZE
+camera.resolution = FILE_SIZE
 camera.framerate = 20
 camera.contrast = 50
 camera.exposure_mode = 'night'
@@ -118,9 +144,9 @@ def displayImageFileOnLCD(filename):
     im_width, im_height = image.size
     if im_width < im_height:
         image = image.rotate(90)
-    image.thumbnail(S_SIZE, Image.ANTIALIAS)
-    image_sized = Image.new('RGB', S_SIZE, (0, 0, 0))
-    image_sized.paste(image,((S_SIZE[0] - image.size[0]) / 2, (S_SIZE[1] - image.size[1]) / 2))
+    image.thumbnail(SCREEN_SIZE, Image.ANTIALIAS)
+    image_sized = Image.new('RGB', SCREEN_SIZE, (0, 0, 0))
+    image_sized.paste(image,((SCREEN_SIZE[0] - image.size[0]) / 2, (SCREEN_SIZE[1] - image.size[1]) / 2))
     # draw the filename
     draw = ImageDraw.Draw(image_sized)
     font = ImageFont.truetype('arial.ttf', 18)
@@ -141,7 +167,7 @@ def printImageFile(filename):
         im_width, im_height = image.size
         if im_width > im_height:
             image = image.rotate(90)
-        image.thumbnail((P_HEIGHT, P_WIDTH), Image.ANTIALIAS)
+        image.thumbnail((PRINTER_HEIGHT, PRINTER_WIDTH), Image.ANTIALIAS)
         printer.printImage(image, False)
         printer.justify('C')
         printer.setSize('S')
@@ -158,7 +184,7 @@ def saveImageToFile(image, filename):
 #Main loop
 while True:
     liveview = LiveView()
-    camera.start_recording(liveview, format='yuv')
+    camera.start_recording(liveview, format='yuv', resize=PRINTER_SIZE)
     # Buttons loop
     while True:
         sleep(0.1)
@@ -170,7 +196,16 @@ while True:
                 i += 1
             currentFileNumber = i
             print("capture pz%05d.jpg" % currentFileNumber)
-            camera.capture("pz%05d.jpg" % currentFileNumber, use_video_port=True)
+            
+            if liveview.mode == FRAME_MODE:
+                camera.capture("pz%05d.jpg" % currentFileNumber, use_video_port=True)
+            
+            if liveview.mode == SCAN_MODE_FIX:
+                liveview.image_scan.save("pz%05d.jpg" % currentFileNumber)
+                
+            if liveview.mode == SCAN_MODE:
+                liveview.image_scan.save("pz%05d.jpg" % currentFileNumber)
+            
             camera.stop_recording()
             break
         # review mode
@@ -180,6 +215,9 @@ while True:
         # start slit-scan mode
         if GPIO.event_detected(PREV_PIN):
             liveview.mode = SCAN_MODE
+        # start slit-scan mode
+        if GPIO.event_detected(NEXT_PIN):
+            liveview.mode = SCAN_MODE_FIX
         # slit-scan mode done
         if liveview.scanDone:
             # Increment file number    
