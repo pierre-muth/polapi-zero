@@ -15,6 +15,7 @@ from PIL import ImageFont
 from smemlcd import SMemLCD
 from picamera import PiCamera
 from io import BytesIO
+from subprocess import check_output
 
 # Constants
 SCREEN_WIDTH = 400
@@ -94,6 +95,7 @@ class LiveView(object):
 
 # Variables
 currentFileNumber = -1
+print check_output(['hostname', '-I'])
 
 # GPIO setup
 GPIO.setmode(GPIO.BOARD)
@@ -111,6 +113,9 @@ GPIO.add_event_detect(PREV_PIN, GPIO.FALLING, bouncetime=400)
 
 # Create Sharp mempry LCD
 lcd = SMemLCD('/dev/spidev0.0')
+
+# get IP adress
+hostIP = check_output(['hostname', '-I'])
 
 # Create Printer
 printer = Adafruit_Thermal("/dev/ttyAMA0", 115200, timeout=0, rtscts=True)
@@ -147,13 +152,16 @@ def displayImageFileOnLCD(filename):
     image.thumbnail(SCREEN_SIZE, Image.ANTIALIAS)
     image_sized = Image.new('RGB', SCREEN_SIZE, (0, 0, 0))
     image_sized.paste(image,((SCREEN_SIZE[0] - image.size[0]) / 2, (SCREEN_SIZE[1] - image.size[1]) / 2))
-    # draw the filename
+    # draw texts
     draw = ImageDraw.Draw(image_sized)
     font = ImageFont.truetype('arial.ttf', 18)
     draw.rectangle([(0, 0), (115, 22)], fill=(255,255,255), outline=(0,0,0))
     draw.text((2, 2), title, fill='black', font=font)
     draw.rectangle([(279, 217), (399, 239)], fill=(255,255,255), outline=(0,0,0))
     draw.text((290, 218), filename, fill='black', font=font)
+    font = ImageFont.truetype('arial.ttf', 10)
+    draw.rectangle([(300, 0), (399, 14)], fill=(255,255,255), outline=(0,0,0))
+    draw.text((302, 2), hostIP, fill='black', font=font)
     # display on LCD
     image_sized = ImageOps.invert(image_sized)
     image_sized = image_sized.convert('1') # convert image to black and white
@@ -180,7 +188,7 @@ def saveImageToFile(image, filename):
     print 'saves image ', filename
     # save full image
     image.save(filename)
-    
+
 #Main loop
 while True:
     liveview = LiveView()
@@ -210,6 +218,7 @@ while True:
             break
         # review mode
         if GPIO.event_detected(PRINT_PIN):
+            hostIP = check_output(['hostname', '-I']) #refresh IP adress
             camera.stop_recording()
             break
         # start slit-scan mode
