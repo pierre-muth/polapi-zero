@@ -1243,7 +1243,7 @@ tobilevel(Imaging imOut, Imaging imIn, int dither)
 
 				for (x = 0; x < imIn->xsize; x++) {
 					/* pick closest colour */
-					l = CLIP( (in[x]-1) >> 2);
+					l = CLIP( (in[x]+1) >> 2);
 					if (l > pattern[x & 7][y & 7]) {
 						out[x] = 255; 
 					} else {
