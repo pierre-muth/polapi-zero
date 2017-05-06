@@ -45,6 +45,7 @@ class LiveView(object):
         self.mode = FRAME_MODE
         self.scanDone = False
         self.lastTime = time.time()
+        self.ditherMode = Image.ORDERED
         
     def write(self, s):
         global lcd
@@ -53,7 +54,7 @@ class LiveView(object):
         if self.mode == FRAME_MODE:
             image.thumbnail(SCREEN_SIZE, Image.NEAREST)
             image = ImageOps.invert(image)
-            image = image.convert('1')
+            image = image.convert('1', dither=self.ditherMode)
             
         if self.mode == SCAN_MODE:
             image = image.crop((self.x, 0, self.x+1, PRINTER_HEIGHT))
@@ -114,6 +115,7 @@ GPIO.add_event_detect(SHOT_PIN, GPIO.FALLING, bouncetime=1000)
 GPIO.add_event_detect(PRINT_PIN, GPIO.FALLING, bouncetime=1000)  
 GPIO.add_event_detect(NEXT_PIN, GPIO.FALLING, bouncetime=400)  
 GPIO.add_event_detect(PREV_PIN, GPIO.FALLING, bouncetime=400)  
+GPIO.add_event_detect(HALT_PIN, GPIO.FALLING, bouncetime=1000)  
 
 # Create Sharp mempry LCD
 lcd = SMemLCD('/dev/spidev0.0')
@@ -129,17 +131,17 @@ stream = BytesIO()
 camera = PiCamera()
 camera.rotation = 180
 camera.resolution = FILE_SIZE
-camera.framerate = 20
+camera.framerate = 18
 camera.contrast = 50
 camera.exposure_mode = 'night'
 camera.start_preview()
 sleep(1)
 
-def haltSystem(channel):
+def haltSystem():
     print 'Halt...'
     os.system("sudo halt")
     
-GPIO.add_event_detect(31, GPIO.FALLING, callback = haltSystem, bouncetime = 2000)
+# GPIO.add_event_detect(HALT_PIN, GPIO.FALLING, callback = haltSystem, bouncetime = 2000)
 
 def displayImageFileOnLCD(filename):
     print 'displays ', filename
@@ -152,7 +154,7 @@ def displayImageFileOnLCD(filename):
         image = Image.open('unidentified.jpg')
     im_width, im_height = image.size
     if im_width < im_height:
-        image = image.rotate(90)
+        image = image.rotate(90, expand=1)
     image.thumbnail(SCREEN_SIZE, Image.ANTIALIAS)
     image_sized = Image.new('RGB', SCREEN_SIZE, (0, 0, 0))
     image_sized.paste(image,((SCREEN_SIZE[0] - image.size[0]) / 2, (SCREEN_SIZE[1] - image.size[1]) / 2))
@@ -178,13 +180,12 @@ def printImageFile(filename):
         image = Image.open(filename)
         im_width, im_height = image.size
         if im_width > im_height:
-            image = image.rotate(90)
+            image = image.rotate(90, expand=1)
             im_width, im_height = image.size
         ratio = (PRINTER_HEIGHT/float(im_width))
         height = int((float(im_height)*float(ratio)))
         image = image.resize((PRINTER_HEIGHT, height), Image.ANTIALIAS)
         
-#         image.thumbnail((PRINTER_HEIGHT, PRINTER_WIDTH), Image.ANTIALIAS)
         printer.printImage(image, False)
         printer.justify('C')
         printer.setSize('S')
@@ -236,6 +237,12 @@ while True:
         # start slit-scan mode
         if GPIO.event_detected(NEXT_PIN):
             liveview.mode = SCAN_MODE_FIX
+		# Change dithering mode
+        if GPIO.event_detected(HALT_PIN):
+            if liveview.ditherMode == Image.ORDERED:
+                liveview.ditherMode = Image.FLOYDSTEINBERG
+            elif liveview.ditherMode == Image.FLOYDSTEINBERG:
+                liveview.ditherMode = Image.ORDERED
         # slit-scan mode done
         if liveview.scanDone:
             # Increment file number    
@@ -277,6 +284,9 @@ while True:
         if GPIO.event_detected(PRINT_PIN):
             # Print current file
             printImageFile("pz%05d.jpg" % currentFileNumber)
+        if GPIO.event_detected(HALT_PIN):
+            # halt system
+            haltSystem()
         if GPIO.event_detected(SHOT_PIN):
             # Exit review
             break
