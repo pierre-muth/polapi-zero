@@ -1,4 +1,4 @@
-// A simple demo using dispmanx to display get screenshot
+// dispmanx to display get screenshot and send to SPI sharp memory LCD
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -6,11 +6,7 @@
 #include <assert.h>
 #include <unistd.h>
 #include <sys/time.h>
-
 #include <stdint.h>
-
-
-
 #include <getopt.h>
 #include <fcntl.h>
 #include <sys/ioctl.h>
@@ -65,7 +61,6 @@ int process()
 	int screenIdx = 0;
 	int lcdIdx = 0;
 	uint32_t frameAlternate1 = 0;
-	uint32_t frameAlternate2 = 63;
 	
 	int pattern[8][8] = {
     { 0, 32,  8, 40,  2, 34, 10, 42},   /* 8x8 Bayer ordered dithering  */
@@ -80,13 +75,13 @@ int process()
 	static const char *device = "/dev/spidev0.0";
 	static uint8_t mode;
 	static uint8_t bits = 8;
-	static uint32_t speed = 5000000;
+	static uint32_t speed = 6000000;
 	static uint16_t delay = 0;
 	int fd;
 
 	// init SPI
 
-	mode |= SPI_CS_HIGH;
+	mode |= SPI_CS_HIGH;	// set CS active high
    
 	fd = open(device, O_RDWR);
 	if (fd < 0) {
@@ -135,13 +130,13 @@ int process()
 
 	printf("Spi mode: %d\n", mode);
 	printf("Bits per word: %d\n", bits);
-	printf("Max speed: %d Hz (%d KHz)\n", speed, speed/1000);
+	printf("Max speed: %d KHz\n", speed/1000);
 
 	// prepare capture
 	
     bcm_host_init();
 
-    printf("Open display[%i]...\n", screen );
+    printf("Open display %i\n", screen );
     
 	display = vc_dispmanx_display_open( screen );
     ret = vc_dispmanx_display_get_info(display, &info);
@@ -156,7 +151,7 @@ int process()
 
     resource = vc_dispmanx_resource_create( type, info.width, info.height, &vc_image_ptr );
 	
-	 while (1) {
+	while (1) {
 
 		// Capturing
 		vc_dispmanx_snapshot(display, resource, transform);
@@ -207,9 +202,6 @@ int process()
 		if (frameAlternate1++ == 63) {
 			frameAlternate1 = 0;
 		}
-		if (frameAlternate2-- == 0) {
-			frameAlternate2 = 63;
-		}
 
 		// sending image block
 		struct spi_ioc_transfer tr = {
@@ -227,7 +219,7 @@ int process()
 			return -1;
 		}
 		
-		usleep(30 * 1000);
+		usleep(10 * 1000);
 		
 	}
 	
@@ -247,6 +239,5 @@ int process()
 }
 
 int main(int argc, char **argv) {
-
     return process();
 }

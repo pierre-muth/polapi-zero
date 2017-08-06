@@ -112,11 +112,15 @@ void init(){
     ADCON0bits.GO_nDONE = 1; // start convertion
     
     //I2C conf
+    SSP1STATbits.CKE = 1;           // Enable input logic so that thresholds are compliant with SMbus specification
     SSP1ADDbits.SSPADD = 0x08;      // address
     SSP1CON1bits.SSPM = 0b0110;     // I2C slave mode
     SSP1CON1bits.SSPEN = 1;         // Enable I2C
     SSP1CON1bits.CKP = 1;           // Enable clock
     SSP1CON2bits.SEN = 1;           // clock streching
+    SSP1CON3bits.AHEN = 0;          // Address holding
+    SSP1CON3bits.DHEN = 0;          // Data holding
+    SSP1CON3bits.BOEN = 1;          // ignoring the state of the SSPOV
     
     //interrupts
     INTCONbits.PEIE = 1;
@@ -159,38 +163,32 @@ void i2cHandle(){
     unsigned char ssp_Buf;
     unsigned char i2c_byte_count = 0;
     
+    if (SSP1STATbits.BF) { // Discard slave address 
+            ssp_Buf = SSP1BUF; // Clear BF
+    }
+    
+    SSP1CON1bits.WCOL = 0;
+    
     if (!SSP1STATbits.D_nA) { // Slave Address 
             
         i2c_byte_count = 0;
 
-        if (SSPSTATbits.BF) { // Discard slave address 
-            ssp_Buf = SSPBUF; // Clear BF
-        }
-
-        if (SSPSTATbits.R_nW) { // Reading 
-            SSPCON1bits.WCOL = 0;
-            SSPBUF = 0xAA;
+        if (SSP1STATbits.R_nW) { // Reading 
+            SSP1BUF = ssp_Buf;
         } 
 
     } else { // Data bytes 
 
         i2c_byte_count++;
 
-        if (SSPSTATbits.BF) {
-            ssp_Buf = SSPBUF; // Clear BF
-        }
-
-        if (SSPSTATbits.R_nW) { // Multi-byte read
-            SSPCON1bits.WCOL = 0;
-            SSPBUF = i2c_byte_count;
-        } else { 
-
-        }
+        if (SSP1STATbits.R_nW) { // Multi-byte read
+            SSP1BUF = ssp_Buf;
+        } 
     }
 
     // Finally
     PIR1bits.SSP1IF = 0; // Clear MSSP interrupt flag
-    SSPCON1bits.CKP = 1; // Release clock 
+    SSP1CON1bits.CKP = 1; // Release clock 
     
 }
 
