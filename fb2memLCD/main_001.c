@@ -39,6 +39,7 @@ int process()
 
     uint8_t		*image;
 	uint8_t 	*byteToSend;
+	uint8_t 	*pixBytes;
     uint32_t 	vc_image_ptr;
 	int 		BPP = 3;
     int 		ret;
@@ -53,7 +54,6 @@ int process()
 	int j = 0;
 	uint32_t l = 0;
 	uint8_t mask = 0x01;
-	uint8_t bytePix = 0x00;
 	int x = 0;
 	int y = 0;
 	int line = 0;
@@ -62,10 +62,6 @@ int process()
 	int screenIdx = 0;
 	int lcdIdx = 0;
 	uint32_t frameAlternate1 = 0;
-	int slept = 0;
-	long int start_time;
-	long int time_difference;
-	struct timespec gettime_now;
 	
 	int pattern[8][8] = {
     { 0, 32,  8, 40,  2, 34, 10, 42},   /* 8x8 Bayer ordered dithering  */
@@ -152,48 +148,68 @@ int process()
 
     image = malloc( sizeof(uint8_t) * info.width * BPP * info.height );
 	byteToSend = malloc(sizeof(uint8_t)*sizeToSend);
+	pixBytes = malloc(sizeof(uint8_t)*byteOnScreen);
 
     assert(image);
 
     resource = vc_dispmanx_resource_create( type, info.width, info.height, &vc_image_ptr );
 	
 	while (1) {
+		t1 = clock();
+
 		// Capturing
 		vc_dispmanx_snapshot(display, resource, transform);
 		vc_dispmanx_rect_set(&rect, 0, 0, info.width, info.height);
 		vc_dispmanx_resource_read_data(resource, &rect, image, info.width*BPP); 	
 		
-		// makes bytes to send on SPI
+		t2 = clock();
+
+		// prepare image bytes
 		for(line = 0; line < HEIGHT; line++){
-			linePointer = line*info.width*BPP;
-			byteToSend[(line*(BYTE_WIDTH+2))+1] = reverse(line+1);   //line address
-			screenIdx =  linePointer;
-
+			linePointer = line*info.width*(BPP);
 			for(col = 0; col < BYTE_WIDTH; col++){
-				bytePix = 0x00;
-				for (j = 0; j < 8; j++) {		//monochorm pixel in a byte
+				for (j = 0; j < 8; j++) {
 					mask = 0b10000000 >> j;
-
-					l = image[screenIdx++] + image[screenIdx++] + image[screenIdx++];
+					screenIdx =  (linePointer) + (((col*8)+j)*(BPP));
+					lcdIdx = (line*(BYTE_WIDTH)) + col;
+					if (j==0) pixBytes[ lcdIdx ] = 0;
+					
+					l = image[screenIdx++] + image[screenIdx++] + image[screenIdx];
 					l = l/3;
 					l = l+1 >> 2;
-
-					if (l > pattern[j & 7][line & 7])	// ordered dithering
-						bytePix = bytePix | mask;
+					
+					if (l > pattern[j & 7][line & 7])
+						pixBytes[ lcdIdx ] = pixBytes[ lcdIdx ] | mask;
 				}
-				byteToSend[(line*(BYTE_WIDTH+2)) +col +2] = bytePix;	// image data
+			}
+		}
+		
+		// prepare block to send
+		col = 0;
+		line = 0;
+		for(i = 0; i < sizeToSend; i++) {
+		
+			if (i == 0) {	// Command + frame alternate (com inversion)
+				if (frameAlternate1%2) byteToSend[i] = 0xC0;
+				else byteToSend[i] = 0x80;
+			} else if (i%(BYTE_WIDTH+2) == 0) {
+				byteToSend[i] = 0x00;  //dummy byte
+				line++;
+				col = 0;
+			} else if (i%(BYTE_WIDTH+2) == 1) {		// line adress
+				byteToSend[i] = reverse( ((i/(BYTE_WIDTH+2))+1) );
+			} else {	// image data
+				byteToSend[i] = pixBytes[(line*BYTE_WIDTH) + col];				
+				col++;
 			}
 
-		}
-
-		// Command + frame alternate (com inversion)
-		if (frameAlternate1%2) byteToSend[0] = 0xC0;
-		else byteToSend[0] = 0x80;
-
+		}	
 
 		if (frameAlternate1++ == 63) {
 			frameAlternate1 = 0;
 		}
+
+		t3 = clock();
 
 		// sending image block
 		struct spi_ioc_transfer tr = {
@@ -211,30 +227,21 @@ int process()
 			return -1;
 		}
 		
-		// delay
-		usleep(5000);
+		t4 = clock();
 
-		slept = 0;
-		while (1) {
-			clock_gettime(CLOCK_REALTIME, &gettime_now);
-			time_difference = gettime_now.tv_nsec - start_time;
-			if (time_difference < 0)
-				time_difference += 1000000000L;			// Rolls over every 1 second
-			if (time_difference > (66666000L))			// Delay for 15 fps
-				break;
-			slept++;
-			usleep(2000);
-		}
-		clock_gettime(CLOCK_REALTIME, &gettime_now);
-		start_time = gettime_now.tv_nsec;		//Get nS value
+		printf("%f, %f, %f\n",
+				((float)(t2 - t1) / 1000000.0F ) * 1000,
+				((float)(t3 - t2) / 1000000.0F ) * 1000,
+				((float)(t4 - t3) / 1000000.0F ) * 1000);
 
-		printf("%d\n", slept);
-
+		usleep(10 * 1000);
+		
 	}
 	
 	
 	// cleanup
     free(byteToSend);
+	free(pixBytes);
 	close(fd);
 	
 	ret = vc_dispmanx_resource_delete( resource );

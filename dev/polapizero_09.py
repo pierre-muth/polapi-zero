@@ -43,50 +43,40 @@ SCAN_MODE_FIX = 3
 
 class SlitScan(object):
     def __init__(self):
-        self.image_scan = Image.new('L', PRINTER_SIZE, 0)
+        self.image_stack = Image.new('L', PRINTER_SIZE, 0)
         self.x = 0
         self.mode = NO_SCAN
         self.scanDone = False
         self.lastTime = time.time()
+        self.screen = screen
         
     def write(self, s):
             
         if self.mode == SCAN_MODE:
             image = Image.frombuffer('L', PRINTER_SIZE, s, "raw", 'L', 0, 1)
             image = image.crop((self.x, 0, self.x+1, PRINTER_HEIGHT))
-            self.image_scan.paste(image,(self.x, 0))
+            self.image_stack.paste(image,(self.x, 0))
             
             if self.x < PRINTER_WIDTH-1:
                 self.x += 1
             else:
                 self.scanDone = True
-                
-            image = ImageOps.invert(self.image_scan)
-            image.thumbnail(SCREEN_SIZE, Image.NEAREST)
-            image = image.convert('1')
+                print("spent for 640 lines: ", time.time()-self.lastTime)
             
         if self.mode == SCAN_MODE_FIX:
             image = Image.frombuffer('L', PRINTER_SIZE, s, "raw", 'L', 0, 1)
             image = image.crop((PRINTER_WIDTH/2, 0, (PRINTER_WIDTH/2)+1, PRINTER_HEIGHT))
             image_total = Image.new('L', (self.x+1, PRINTER_HEIGHT), 0)
-            image_total.paste(self.image_scan, (0, 0))
+            image_total.paste(self.image_stack, (0, 0))
             image_total.paste(image,(self.x, 0))
-            self.image_scan = image_total.copy()
+            self.image_stack = image_total.copy()
               
             if self.x < 5000:
                 self.x += 1
             else:
                 self.scanDone = True
+                print("spent for 5000 lines: ", time.time()-self.lastTime)
                   
-            image = ImageOps.invert(self.image_scan)
-            if image.size[0] > PRINTER_SIZE[0]:
-                image = image.crop((image.size[0]-1 - PRINTER_SIZE[0], 0, image.size[0]-1, PRINTER_HEIGHT))
-            
-            image.thumbnail(SCREEN_SIZE, Image.NEAREST)
-            image_sized = Image.new('L', SCREEN_SIZE, 0)
-            image_sized.paste(image,(0, 0))
-            image = image_sized.convert('1')
-
     def flush(self):
         print('Stop SlitScan') 
 
@@ -106,6 +96,11 @@ screen.blit(logo, (40,95))
 pygame.display.flip()
 clock = pygame.time.Clock()
 
+# greyscale Palette
+grey_palette = [(0, 0, 0)]
+for i in range(1, 256):
+    grey_palette.append( (i, i, i) )
+
 # GPIO setup
 GPIO.setmode(GPIO.BOARD)
 GPIO.setup(SHOT_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
@@ -117,8 +112,8 @@ GPIO.setup(HALT_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 # add edge detection on a channel
 GPIO.add_event_detect(SHOT_PIN, GPIO.FALLING, bouncetime=1000)  
 GPIO.add_event_detect(PRINT_PIN, GPIO.FALLING, bouncetime=1000)  
-GPIO.add_event_detect(NEXT_PIN, GPIO.FALLING, bouncetime=400)  
-GPIO.add_event_detect(PREV_PIN, GPIO.FALLING, bouncetime=400)  
+GPIO.add_event_detect(NEXT_PIN, GPIO.FALLING, bouncetime=500)  
+GPIO.add_event_detect(PREV_PIN, GPIO.FALLING, bouncetime=500)  
 GPIO.add_event_detect(HALT_PIN, GPIO.FALLING, bouncetime=1000)  
 
 # get IP adress
@@ -132,9 +127,13 @@ stream = BytesIO()
 camera = PiCamera()
 camera.rotation = 180
 camera.resolution = FILE_SIZE
-camera.framerate_range = (0.16666, 60)
+camera.framerate_range = (0.16666, 90)
 camera.contrast = 50
 camera.exposure_mode = 'night'
+
+# Start frame buffer to LCD program
+# os.system("/home/pi/project/polapi-zero/fb2memLCD/build/fb2memLCD &")
+
 sleep(1)
 
 def haltSystem():
@@ -187,34 +186,23 @@ def slideImage(filename, direction):
     pygame.display.flip()
     previousimage = image
 
-def displayImageFileOnLCD(filename):
-    print 'displays ', filename
-    title = 'Review Mode'
-    # resize/dither to screen resolution and send to LCD
-    try:
-        image = Image.open(filename)
-    except IOError:
-        print ("cannot identify image file", filename)
-        image = Image.open('unidentified.jpg')
-    im_width, im_height = image.size
-    if im_width < im_height:
-        image = image.rotate(90, expand=1)
-    image.thumbnail(SCREEN_SIZE, Image.ANTIALIAS)
-    image_sized = Image.new('RGB', SCREEN_SIZE, (0, 0, 0))
-    image_sized.paste(image,((SCREEN_SIZE[0] - image.size[0]) / 2, (SCREEN_SIZE[1] - image.size[1]) / 2))
-    # draw texts
-    draw = ImageDraw.Draw(image_sized)
-    font = ImageFont.truetype('arial.ttf', 18)
-    draw.rectangle([(0, 0), (115, 22)], fill=(255,255,255), outline=(0,0,0))
-    draw.text((2, 2), title, fill='black', font=font)
-    draw.rectangle([(279, 217), (399, 239)], fill=(255,255,255), outline=(0,0,0))
-    draw.text((290, 218), filename, fill='black', font=font)
-    font = ImageFont.truetype('arial.ttf', 10)
-    draw.rectangle([(300, 0), (399, 14)], fill=(255,255,255), outline=(0,0,0))
-    draw.text((302, 2), hostIP, fill='black', font=font)
-    # display on LCD
-    image_sized = ImageOps.invert(image_sized)
-    image_sized = image_sized.convert('1') # convert image to black and white
+def displayImage(image):
+    global grey_palette
+    
+    l_height = SCREEN_HEIGHT
+    l_width = SCREEN_WIDTH
+
+    pgImage = pygame.image.frombuffer(image.tobytes(), image.size, 'P' )
+    pgImage.set_palette(grey_palette)
+
+    i_width = pgImage.get_width()
+    i_height = pgImage.get_height()
+    
+    pgImage = pygame.transform.scale( pgImage, (int(i_width*(1.0*l_height/i_height)),  l_height) )
+    screen.fill(backgroundColor)
+    screen.blit(pgImage, ((l_width - pgImage.get_width())/2, (l_height-pgImage.get_height())/2))
+    pygame.display.flip()
+    
     
 def printImageFile(filename):
     print 'prints ', filename
@@ -253,34 +241,35 @@ while True:
         sleep(0.1)
         # take a picture   
         if GPIO.event_detected(SHOT_PIN):
-            # Increment file number    
-            i = 1
-            while os.path.exists("pz%05d.jpg" % i):
-                i += 1
-            currentFileNumber = i
-            print("capture pz%05d.jpg" % currentFileNumber)
             
             if slitScanProcess.mode == NO_SCAN:
-                camera.capture("pz%05d.jpg" % currentFileNumber, use_video_port=True)
+                # Increment file number    
+                i = 1   
+                while os.path.exists("pz%05d.jpg" % i):
+                    i += 1
+                currentFileNumber = i
+                print("capture pz%05d.jpg" % currentFileNumber)
+                # take picture
+                camera.capture("pz%05d.jpg" % currentFileNumber, use_video_port=False)
+                camera.stop_preview()
+                break
             
             if slitScanProcess.mode == SCAN_MODE_FIX:
-                slitScanProcess.image_scan.save("pz%05d.jpg" % currentFileNumber)
-                camera.stop_recording()
+                slitScanProcess.scanDone = True
                 
             if slitScanProcess.mode == SCAN_MODE:
-                slitScanProcess.image_scan.save("pz%05d.jpg" % currentFileNumber)
-                camera.stop_recording()
+                slitScanProcess.scanDone = True
             
-            camera.stop_preview()
-            break
         # start slit-scan mode
         if GPIO.event_detected(PREV_PIN):
             slitScanProcess.mode = SCAN_MODE
+            slitScanProcess.lastTime = time.time()
             camera.start_recording(slitScanProcess, format='yuv', resize=PRINTER_SIZE)
             camera.stop_preview()
         # start slit-scan mode
         if GPIO.event_detected(NEXT_PIN):
             slitScanProcess.mode = SCAN_MODE_FIX
+            slitScanProcess.lastTime = time.time()
             camera.start_recording(slitScanProcess, format='yuv', resize=PRINTER_SIZE)
             camera.stop_preview()
         # halt system
@@ -294,7 +283,7 @@ while True:
                 i += 1
             currentFileNumber = i
             print("capture pz%05d.jpg" % currentFileNumber)
-            slitScanProcess.image_scan.save("pz%05d.jpg" % currentFileNumber)
+            slitScanProcess.image_stack.save("pz%05d.jpg" % currentFileNumber)
             camera.stop_recording()
             camera.stop_preview()
             break
@@ -302,14 +291,19 @@ while True:
         if GPIO.event_detected(PRINT_PIN):
             hostIP = check_output(['hostname', '-I']) #refresh IP adress
             
+            if slitScanProcess.mode == NO_SCAN:
+                camera.stop_preview()
+                break
+                
             if slitScanProcess.mode == SCAN_MODE_FIX:
-                camera.stop_recording()
+                slitScanProcess.scanDone = True
                 
             if slitScanProcess.mode == SCAN_MODE:
-                camera.stop_recording()
+                slitScanProcess.scanDone = True
             
-            camera.stop_preview()
-            break
+        # show ongoing scan
+        if slitScanProcess.mode == SCAN_MODE or slitScanProcess.mode == SCAN_MODE_FIX:
+            displayImage(slitScanProcess.image_stack)
     
     # Set current file number if not set yet
     if currentFileNumber == -1 :
