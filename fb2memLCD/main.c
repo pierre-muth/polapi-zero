@@ -15,6 +15,7 @@
 #include <string.h>
 #include <linux/fb.h>
 #include <sys/mman.h>
+#include <time.h>
 
 #define ARRAY_SIZE(a) (sizeof(a) / sizeof((a)[0]))
 
@@ -38,7 +39,6 @@ int process()
 
     uint8_t		*image;
 	uint8_t 	*byteToSend;
-	uint8_t 	*pixBytes;
     uint32_t 	vc_image_ptr;
 	int 		BPP = 3;
     int 		ret;
@@ -53,6 +53,7 @@ int process()
 	int j = 0;
 	uint32_t l = 0;
 	uint8_t mask = 0x01;
+	uint8_t bytePix = 0x00;
 	int x = 0;
 	int y = 0;
 	int line = 0;
@@ -78,6 +79,8 @@ int process()
 	static uint32_t speed = 6000000;
 	static uint16_t delay = 0;
 	int fd;
+
+	clock_t t1, t2, t3, t4;
 
 	// init SPI
 
@@ -145,7 +148,6 @@ int process()
 
     image = malloc( sizeof(uint8_t) * info.width * BPP * info.height );
 	byteToSend = malloc(sizeof(uint8_t)*sizeToSend);
-	pixBytes = malloc(sizeof(uint8_t)*byteOnScreen);
 
     assert(image);
 
@@ -153,55 +155,48 @@ int process()
 	
 	while (1) {
 
+		t1 = clock();
+
 		// Capturing
 		vc_dispmanx_snapshot(display, resource, transform);
 		vc_dispmanx_rect_set(&rect, 0, 0, info.width, info.height);
 		vc_dispmanx_resource_read_data(resource, &rect, image, info.width*BPP); 	
 		
-		// prepare image bytes
+		t2 = clock();
+
+		// makes bytes to send on SPI
 		for(line = 0; line < HEIGHT; line++){
-			linePointer = line*info.width*(BPP);
+			linePointer = line*info.width*BPP;
+			byteToSend[(line*(BYTE_WIDTH+2))+1] = reverse(line+1);   //line address
+			screenIdx =  linePointer;
+
 			for(col = 0; col < BYTE_WIDTH; col++){
-				for (j = 0; j < 8; j++) {
+				bytePix = 0x00;
+				for (j = 0; j < 8; j++) {		//monochorm pixel in a byte
 					mask = 0b10000000 >> j;
-					screenIdx =  (linePointer) + (((col*8)+j)*(BPP));
-					lcdIdx = (line*(BYTE_WIDTH)) + col;
-					if (j==0) pixBytes[ lcdIdx ] = 0;
-					
-					l = image[screenIdx++] + image[screenIdx++] + image[screenIdx];
+
+					l = image[screenIdx++] + image[screenIdx++] + image[screenIdx++];
 					l = l/3;
 					l = l+1 >> 2;
-					
-					if (l > pattern[j & 7][line & 7])
-						pixBytes[ lcdIdx ] = pixBytes[ lcdIdx ] | mask;
+
+					if (l > pattern[j & 7][line & 7])	// ordered dithering
+						bytePix = bytePix | mask;
 				}
-			}
-		}
-		
-		// prepare block to send
-		col = 0;
-		line = 0;
-		for(i = 0; i < sizeToSend; i++) {
-		
-			if (i == 0) {
-				if (frameAlternate1%2) byteToSend[i] = 0xC0;
-				else byteToSend[i] = 0x80;
-			} else if (i%(BYTE_WIDTH+2) == 0) {
-				byteToSend[i] = 0x00;  //dummy byte
-				line++;
-				col = 0;
-			} else if (i%(BYTE_WIDTH+2) == 1) {
-				byteToSend[i] = reverse( ((i/(BYTE_WIDTH+2))+1) );
-			} else {
-				byteToSend[i] = pixBytes[(line*BYTE_WIDTH) + col];				
-				col++;
+				byteToSend[(line*(BYTE_WIDTH+2)) +col +2] = bytePix;	// image data
 			}
 
-		}	
+		}
+
+		// Command + frame alternate (com inversion)
+		if (frameAlternate1%2) byteToSend[0] = 0xC0;
+		else byteToSend[0] = 0x80;
+
 
 		if (frameAlternate1++ == 63) {
 			frameAlternate1 = 0;
 		}
+
+		t3 = clock();
 
 		// sending image block
 		struct spi_ioc_transfer tr = {
@@ -219,14 +214,21 @@ int process()
 			return -1;
 		}
 		
-		usleep(10 * 1000);
+		t4 = clock();
+
+		usleep(20 * 1000);
+
+//		printf("%f, %f, %f, tot=%f\n",
+//				((float)(t2 - t1) / 1000000.0F ) * 1000,
+//				((float)(t3 - t2) / 1000000.0F ) * 1000,
+//				((float)(t4 - t3) / 1000000.0F ) * 1000,
+//				((float)(t4 - t1) / 1000000.0F ) * 1000);
 		
 	}
 	
 	
 	// cleanup
     free(byteToSend);
-	free(pixBytes);
 	close(fd);
 	
 	ret = vc_dispmanx_resource_delete( resource );
